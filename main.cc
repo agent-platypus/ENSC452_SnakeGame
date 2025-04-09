@@ -19,11 +19,10 @@
 #include "digits.h"
 #include "xil_exception.h"
 #include "xpseudo_asm.h"
-
-// Function to check if a position is valid (not on the snake's body)
+#include "game_logic.h"
+#define BLOCK_SIZE 20
 #define ARM1_STARTADR 0xFFFFFFF0
 #define ARM1_BASEADDR 0x10080000
-//#define COMM_VAL (*(volatile unsigned long *)(0xFFFF0000))
 #define sev() __asm__("sev")
 #include "xil_mmu.h"
 #define INTC_DEVICE_ID 		XPAR_PS7_SCUGIC_0_DEVICE_ID
@@ -31,217 +30,65 @@
 #define INTC_GPIO_INTERRUPT_ID XPAR_FABRIC_AXI_GPIO_1_IP2INTC_IRPT_INTR
 #define BTN_INT 			XGPIO_IR_CH1_MASK
 #define UART_BASEADDR XPAR_PS7_UART_1_BASEADDR
-#define STARTING_LENGTH 10
-#define BLOCK_SIZE 20
-#define PLAYABLE_LEFT 90
-#define PLAYABLE_RIGHT 1191
-#define PLAYABLE_TOP 130
-#define PLAYABLE_BOTTOM 931
-
-#define NUM_BLOCKS_X ((PLAYABLE_RIGHT - PLAYABLE_LEFT) / BLOCK_SIZE)
-#define NUM_BLOCKS_Y ((PLAYABLE_BOTTOM - PLAYABLE_TOP) / BLOCK_SIZE)
 #define TIMER_DEFAULT 0xFF3CB9FF
-#define IP_CORE_BASE_ADDR XPAR_LFSR_IP_0_S00_AXI_BASEADDR
-#define SEED_REG_OFFSET          0x04
-#define RANDOM_NUMBER_REG_OFFSET 0x00
-
-// Define the base address and offset for the LFSR random number register
-#define LFSR_BASE_ADDR XPAR_LFSR_IP_0_S00_AXI_BASEADDR // Replace with your LFSR's base address
-#define LFSR_RANDOM_REG_OFFSET 0x00 // Offset for the random number register
-#define MAX_OBSTACLES 10 // Maximum number of obstacles
-
-bool isInvincible = false;
-int invincible_duration = 0;
-bool speed_boost_active = false; // Is the speed boost active?
-int speed_boost_duration = 0; // Remaining duration of the speed boost (in timer interrupts)
-Food food; // Declare a Food variable
-
-XTmrCtr TimerInstancePtr;
-
+#define SPEED_EASY    0xFF3CB9FF  // Original/default speed 4282169855 4291821568
+#define SPEED_MEDIUM  SPEED_EASY * 1.0005  //
+#define SPEED_HARD    SPEED_EASY  * 1.001//
+#define STARTING_LENGTH 10
 
 XGpio BTNInst;
 volatile bool TIMER_INTR_FLG;
 XScuGic INTCInst;
 static int btn_value;
-int current_direction = 3;
-int snakeBody_X[200], snakeBody_Y[200];
-int x_coord;
-int y_coord;
-int SNAKE_LENGTH = 10;
-bool GameOver = false;
 
-int food_x, food_y; // Food position
-extern int* colors;
-extern int colorindex;
 static void BTN_Intr_Handler(void *baseaddr_p);
-void GameOver_loop();
-
-enum StartMenuOption{
-	Start = 1,
-	Options = 2
-};
-enum OptionSelection{
-	Volume = 0,
-	Difficulty = 1,
-	Snake_Color = 2
-};
-
-enum State{
-	StartMenu = 0,
-	GameStart = 1,
-	GameOptions = 2
-};
-
-enum Difficulty{
-	Easy = 1,
-	Medium = 2,
-	Hard = 3
-};
-
-int GameState = 0;
-int StartOption = Start;
-int OptionSelected = Volume;
-int counter = 0;
-int volume = 50;
-int difficulty = Easy;
-int score = 0;
-typedef struct {
-    int x; // X coordinate
-    int y; // Y coordinate
-} Obstacle;
-
-Obstacle obstacles[MAX_OBSTACLES]; // Array to store obstacles
-int num_obstacles = 0; // Number of obstacles spawned
+int max_score;
+u32 current_speed;
+XTmrCtr TimerInstancePtr;
 
 
-// Shared memory structure
-
-typedef struct {
-    volatile unsigned long COMM_VAL; // COMM_VAL as part of the structure
-    char filename[32]; // Filename of the audio file
-    int loopMusic;
-    int command;       // Command (e.g., play background music, play sound effect)
-} __attribute__((packed)) audio_command_t; // Pack the structure to avoid padding
-
-extern "C" {
-    volatile audio_command_t *shared_memory = (audio_command_t *)0xFFFF0000; // Adjust address as needed
+// Function to read current timer speed
+u32 GetTimerSpeed(XTmrCtr *InstancePtr) {
+    return XTmrCtr_ReadReg(InstancePtr->BaseAddress, 0, XTC_TLR_OFFSET);
 }
 
-// Function to trigger background music
-//extern "C"{
-//void triggerBackgroundMusic(const char *filename) {
-//    shared_memory -> loopMusic = 1; // Enable looping
-//
-//    printf("Attempting to play: %s\r\n", filename); // Debug print
-//	strcpy((char *)shared_memory->filename, filename);
-//    printf("Copied filename to shared memory: %s\r\n", shared_memory->filename); // Debug print
-//   // shared_memory->command = 1; // Command to play background music
-//    __sync_synchronize(); // Memory barrier to ensure data is read
-//    shared_memory -> COMM_VAL = 1;
-//    printf("Core 0: Raw filename bytes: ");
-//                        for (int i = 0; i < sizeof(shared_memory->filename); i++) {
-//                            printf("%02X ", (unsigned char)shared_memory->filename[i]);
-//                        }
-//                        printf("\r\n");
-//    // Signal Core 1
-//   // printf("Core 0: COMM_VAL set to 1\r\n"); // Debug print
-//  //  printf("Core 0: Command value: %d\r\n", shared_memory->command); // Debug print
-//
-//}
-//}
-
+// Function to interact with core 1 and play soundFx when needed
 void triggerSoundFx(const char *filename) {
 
-    __sync_synchronize(); // Memory barrier to ensure data is read
     printf("Attempting to play: %s\r\n", filename); // Debug print
+    // copies filename of audio that needs to be played and writes to shared memory
     strcpy((char *)shared_memory->filename, filename);
+
     printf("Copied filename to shared memory: %s\r\n", shared_memory->filename); // Debug print
+    // Ensures communication between the two is locked to the comm_val so no memory errors happen
     shared_memory -> COMM_VAL = 1;
-    //shared_memory -> command = 1;
 }
 
-// Function to generate a random number using the hardware LFSR
-uint16_t lfsr_random() {
-    uint32_t random_value = Xil_In32(LFSR_BASE_ADDR + LFSR_RANDOM_REG_OFFSET);
-    return (uint16_t)(random_value & 0xFFFF); // Use lower 16 bits
-}
-
-
-
-// Function to generate a random block index within the playable area
-int is_position_valid(int x, int y, int snakeBody_X[], int snakeBody_Y[], int snake_length) {
-    for (int i = 0; i < snake_length; i++) {
-    	if (snakeBody_X[i] == x && snakeBody_Y[i] == y) {
-    		return 0; // Position is invalid
-        }
-    }
-    // Check for collisions with obstacles
-       for (int i = 0; i < num_obstacles; i++) {
-           if (obstacles[i].x == x && obstacles[i].y == y) {
-               return 0; // Position is invalid
-           }
-       }
-    return 1; // Position is valid
-}
-
-void spawn_obstacles(int snakeBody_X[], int snakeBody_Y[], int snake_length) {
-    num_obstacles = 0; // Reset obstacle count
-
-    for (int i = 0; i < MAX_OBSTACLES; i++) {
-        int x, y;
-        do {
-            // Generate random block indices using the hardware LFSR
-            x = lfsr_random() % NUM_BLOCKS_X;
-            y = lfsr_random() % NUM_BLOCKS_Y;
-
-            // Convert block indices to pixel coordinates
-            x = PLAYABLE_LEFT + x * BLOCK_SIZE;
-            y = PLAYABLE_TOP + y * BLOCK_SIZE;
-        } while (!is_position_valid(x, y, snakeBody_X, snakeBody_Y, snake_length)); // Ensure the position is valid
-
-        // Add the obstacle to the array
-        obstacles[num_obstacles].x = x;
-        obstacles[num_obstacles].y = y;
-        num_obstacles++;
-
-        // Draw the obstacle
-        DrawBlock(x, y, false, 0x00808080);
-    }
-}
-
-void get_random_block(int* block_x, int* block_y, int snakeBody_X[], int snakeBody_Y[], int snake_length) {
-    int x, y;
-    do {
-        // Generate random block indices using the hardware LFSR
-        x = lfsr_random() % NUM_BLOCKS_X;
-        y = lfsr_random() % NUM_BLOCKS_Y;
-
-        // Convert block indices to pixel coordinates
-        *block_x = PLAYABLE_LEFT + x * BLOCK_SIZE;
-        *block_y = PLAYABLE_TOP + y * BLOCK_SIZE;
-    } while (!is_position_valid(*block_x, *block_y, snakeBody_X, snakeBody_Y, snake_length)); // Ensure the position is valid
-}
-
-void spawn_food(Food* food, int snakeBody_X[], int snakeBody_Y[], int snake_length) {
-    // Generate random coordinates
-    get_random_block(&food_x, &food_y, snakeBody_X, snakeBody_Y, snake_length);
-
-    // Generate a random value and constrain it to 0-6
-        uint16_t random_value = lfsr_random();
-        food->type = (FoodType)(random_value % 7); // 7 types of food (0 to 6)
-        food->lifetime = 150;
-
-    // Draw the food with the corresponding color
-    DrawFood(food_x, food_y, food->type);
-}
-// resetting the game: redrawing the map and resetting the snake coordinates
+// Initialize everything and restart game state
 void restart_game(){
+	soundFX = false;
 	speed_boost_active = false;
-	speed_boost_duration = 0; // Remaining duration of the speed boost (in timer interrupts)
+	speed_boost_duration = 0;
 	isInvincible = false;
 	invincible_duration = 0;
-	XTmrCtr_SetResetValue(&TimerInstancePtr, 0, TIMER_DEFAULT);
-	counter = 0;
+
+	// Set speed and max score based on difficulty
+	switch(difficulty) {
+	        case Easy:
+	            XTmrCtr_SetResetValue(&TimerInstancePtr, 0, SPEED_EASY);
+	            max_score = 10;
+	            break;
+	        case Medium:
+	            XTmrCtr_SetResetValue(&TimerInstancePtr, 0, SPEED_MEDIUM);
+	            max_score = 20;
+	            break;
+	        case Hard:
+	            XTmrCtr_SetResetValue(&TimerInstancePtr, 0, SPEED_HARD);
+	            max_score = 30;
+	            break;
+	    }
+	// Get current speed because difficulty would change default timer. For later use
+	current_speed = GetTimerSpeed(&TimerInstancePtr);
 	Draw_Map();
 	score = 0;
 	draw_score(score);
@@ -249,30 +96,37 @@ void restart_game(){
 	y_coord = 530;
 	SNAKE_LENGTH = STARTING_LENGTH;
 	current_direction = 3;
-	DrawBlock(x_coord, y_coord, false, colors[1]);
+	DrawSnakeHead(x_coord, y_coord, false, colors[colorindex], true);
+
 	for(int i = 0; i<STARTING_LENGTH; i++) {
-		DrawBlock(x_coord+i*20, y_coord, false,colors[1]);
+		DrawBlock(x_coord+i*20, y_coord, false,colors[colorindex]);
 		snakeBody_X[i] = x_coord+i*20;
 		snakeBody_Y[i] = y_coord;
 	}
 
-     spawn_food(&food, snakeBody_X, snakeBody_Y, SNAKE_LENGTH);
 
+     spawn_food(&food, snakeBody_X, snakeBody_Y, SNAKE_LENGTH);
 	 spawn_obstacles(snakeBody_X, snakeBody_Y, SNAKE_LENGTH);
 
 
 }
 
-bool soundFX;
-bool collisionFX;
+// Game logic when running in background, must be run in main so we can use timer interrupts properly
 void update_block() {
 
+	  if (score >= max_score ){
+				    	 		DisplayVictory();
+				    	 		GameOver = true;
+				    	 		triggerSoundFx("win.wav");
 
+				    	 				    	  	  }
 
+		bool BodyCollisionDetected = false;
 		DrawBlock(snakeBody_X[SNAKE_LENGTH-1], snakeBody_Y[SNAKE_LENGTH-1], true, colors[colorindex]);
+		DrawBlock(x_coord, y_coord, false, colors[colorindex]);
+
 		int prevX = x_coord;
 		int prevY = y_coord;
-		//int prev2X, prev2Y;
 		if(current_direction == 1) { //DOWN
 			y_coord+=20;
 		}
@@ -285,6 +139,125 @@ void update_block() {
 		else if(current_direction == 4) { //RIGHT
 			x_coord+=20;
 		}
+
+		// Food collision check, different types of food, all give SNAKE_LENGTH++ and score++ (exceptions aswell)
+		if (x_coord == food_x && y_coord == food_y) {
+			// Get current speed because difficulty would change default time. For later use
+        	u32 current_speed = GetTimerSpeed(&TimerInstancePtr);
+
+				        printf("Food eaten: Type = %d\n", food.type); // Debug print
+				    	  switch (food.type) {
+				    	            case FOOD_REGULAR: // Represented by a blueberry, just increases length and score
+				    	                // Increase snake length
+				    	            	SNAKE_LENGTH++;
+				    	            	score++;
+				    	            	clear_score(score-1);
+				    	            	draw_score(score);
+				    	            	soundFX = true;
+				    	                break;
+				    	            case FOOD_SPEED_BOOST: // Apple, gives speed boost for a set duration
+				    	            	SNAKE_LENGTH++;
+				    	            	xil_printf("SPEED FOOD AQCUIRED \n ");
+				    	            	score++;
+				    	            	clear_score(score-1);
+				    	            	draw_score(score);
+				    	            	XTmrCtr_SetResetValue(&TimerInstancePtr, 0, current_speed * 1.001); // Speed boost
+				    	            	speed_boost_active = true;
+				    	            	speed_boost_duration = 50;
+				    	            	soundFX = true;
+				    	                xil_printf("Speed Boost! New speed: 0x%08X\n", GetTimerSpeed(&TimerInstancePtr));
+
+				    	                break;
+				    	            case FOOD_SLOW_DOWN: // Eggplant, slow down for a set duration
+				    	            	SNAKE_LENGTH++;
+				    	            	xil_printf("SLOW FOOD AQCUIRED \n ");
+				    	            	score++;
+				    	            	clear_score(score-1);
+				    	            	draw_score(score);
+				    	            	XTmrCtr_SetResetValue(&TimerInstancePtr, 0, current_speed * .99); // Slow down
+				  		    	        speed_boost_active = true;
+				  		    	      	speed_boost_duration = 5;
+				  		    	      	soundFX = true;
+				  		    	        xil_printf("Slow Down! New speed: 0x%08X\n", GetTimerSpeed(&TimerInstancePtr));
+
+				    	                break;
+				    	            case FOOD_REVERSE: // pink, currently not in use was meant for 2 player mode if implemented
+				    	                // Reverse controls
+				    	            	xil_printf("REVERSE FOOD AQCUIRED \n ");
+				    	            	soundFX = true;
+				    	                current_direction = 5 - current_direction; // Reverse direction
+				    	                break;
+				    	            case FOOD_SHRINK: // purple, currently not in use was meant for 2 player mode if implemented
+				    	            	soundFX = true;
+				    	            	xil_printf("SHRINK FOOD AQCUIRED \n ");
+				    	            	counter --;
+				    	            	xil_printf("COUNTER: %d\n", counter);
+
+				    	                // Reduce snake length
+				    	                break;
+				    	            case FOOD_INVINCIBLE: // Banana, turn invincible for a certain duration, head turns white and can go through blocks
+				    	            	SNAKE_LENGTH++;
+				    	            	soundFX = true;
+				    	            	score++;
+				    	            	clear_score(score-1);
+				    	            	draw_score(score);
+				    	            	xil_printf("INVINCIBLE FOOD AQCUIRED \n ");
+				    	            	isInvincible = true;
+				    	            	invincible_duration = 50;
+
+				    	                break;
+				    	            case FOOD_BONUS: // Represented by orange, gives 5 extra points, length only by 1
+
+				    	            	SNAKE_LENGTH++;
+				    	            	clear_score(score);
+				    	            	score = score + 5;
+				    	            	draw_score(score);
+				    	            	xil_printf("BONUS FOOD AQCUIRED \n ");
+				    	            	soundFX = true;
+
+				    	                break;
+				    	            default:
+				    	            	xil_printf("DEFAULT CASE FOOD TYPE: %d \n", food.type);
+				    	            	break;
+
+				    	        }
+				    	    //calls spawn_food after it has been eaten to spawn new food
+				    		spawn_food(&food, snakeBody_X, snakeBody_Y, SNAKE_LENGTH);
+
+
+
+				    }
+		// Collision check for obstacles, has invincibility check
+
+				 for (int i = 0; i < num_obstacles; i++) {
+					  // Check if snake head overlaps obstacle (20x20 block)
+					    if (x_coord < obstacles[i].x + BLOCK_SIZE &&
+					        x_coord + BLOCK_SIZE > obstacles[i].x &&
+					        y_coord < obstacles[i].y + BLOCK_SIZE &&
+					        y_coord + BLOCK_SIZE > obstacles[i].y) {
+				            if (isInvincible) {
+				                printf("Deleting obstacle at (%d, %d)\n", obstacles[i].x, obstacles[i].y); // Debug print
+				                fflush(stdout); // Flush the output buffer
+
+				                // Erase the obstacle
+				                DrawBlock(obstacles[i].x, obstacles[i].y, true, 5);
+				                // Remove the obstacle from the array
+				                for (int j = i; j < num_obstacles - 1; j++) {
+				                    obstacles[j] = obstacles[j + 1];
+				                }
+				                num_obstacles--;
+				                i--;
+				            } else {
+				                // Handle normal collision (e.g., game over)
+				    			DrawSnakeHead(prevX, prevY, false, colors[colorindex], false);
+
+				            	DisplayGameover();
+				                GameOver = true;
+				                BodyCollisionDetected = true;
+				                triggerSoundFx("Death.wav");
+				            }
+				        }
+				 }
 		// body collision: check if the updated coordinate of the head has any intersection
 				// with the body blocks
 				// change the condition to a variable condition later
@@ -292,129 +265,41 @@ void update_block() {
 			if((x_coord == snakeBody_X[i] && y_coord == snakeBody_Y[i])) {
 				DisplayGameover();
 				GameOver = true;
-				GameOver_loop();
-				collisionFX = true;
+				DrawSnakeHead(prevX, prevY, false, colors[colorindex], false);
+				BodyCollisionDetected = true;
+                triggerSoundFx("Death.wav");
+
 				}
 		}
-		// Collision check for obstacles, has invincibility check
-		 for (int i = 0; i < num_obstacles; i++) {
-		        if (x_coord == obstacles[i].x && y_coord == obstacles[i].y) {
-		            if (isInvincible) {
-		                printf("Deleting obstacle at (%d, %d)\n", obstacles[i].x, obstacles[i].y); // Debug print
-		                fflush(stdout); // Flush the output buffer
 
-		                // Erase the obstacle
-		                DrawBlock(obstacles[i].x, obstacles[i].y, true, 5);
-		                // Remove the obstacle from the array
-		                for (int j = i; j < num_obstacles - 1; j++) {
-		                    obstacles[j] = obstacles[j + 1];
-		                }
-		                num_obstacles--;
-		            } else {
-		                // Handle normal collision (e.g., game over)
-		            	DisplayGameover();
-		                GameOver = true;
-		                GameOver_loop();
-		                collisionFX = true;
-		            }
-		        }
-		 }
 
-		// problem: when the snake runs into right and bottom side of the gamespace boundary
-				// since each block coordinate is located at the top left of the block,
+		// collision checking to check if touching border of the game
 		if (y_coord > 929 || y_coord < 130 ||  x_coord > 1189 || x_coord < 90) {
-//			if(y_coord > 929 || x_coord > 1189) {
-//				DrawBlock(x_coord, y_coord, false);
-//			}
+
 			DisplayGameover();
+			DrawSnakeHead(prevX, prevY, false, colors[colorindex], false);
 			GameOver = true;
-			GameOver_loop();
-            collisionFX = true;
+			BodyCollisionDetected = true;
+            triggerSoundFx("Death.wav");
+
 
 		}
-		  // Check for collision with the food
-		    if (x_coord == food_x && y_coord == food_y) {
-		        printf("Food eaten: Type = %d\n", food.type); // Debug print
-		    	        fflush(stdout); // Flush the output buffer
-		    	  switch (food.type) {
-		    	            case FOOD_REGULAR: // blue
-		    	                // Increase snake length
-		    	            	SNAKE_LENGTH++;
-		    	            	clear_score(score);
-		    	            	score++;
-		    	            	draw_score(score);
-		    	            	xil_printf("REGULAR FOOD AQCUIRED \n ");
-		    	            	xil_printf("COUNTER: %d\n", counter);
-		    	            	soundFX = true;
-		    	                break;
-		    	            case FOOD_SPEED_BOOST: // red
-		    	            	xil_printf("SPEED FOOD AQCUIRED \n ");
-		    	                // Increase speed (e.g., reduce timer delay)
 
-		  		    	        XTmrCtr_SetResetValue(&TimerInstancePtr, 0, 0xFFD00000);
-		    	            	speed_boost_active = true;
-		    	            	speed_boost_duration = 50;
-		    	            	soundFX = true;
+		    else
+		    {
+		    	if(!BodyCollisionDetected) {
+		    					DrawSnakeHead(x_coord, y_coord, false, colors[colorindex], true);
+		    				}
 
-		    	                break;
-		    	            case FOOD_SLOW_DOWN: // light blue
-		    	            	xil_printf("SLOW FOOD AQCUIRED \n ");
-		  		    	        XTmrCtr_SetResetValue(&TimerInstancePtr, 0, 0xFBF0BDC0);
-		  		    	        speed_boost_active = true;
-		  		    	      	speed_boost_duration = 5;
-		  		    	      	soundFX = true;
-
-		    	                // Decrease speed (e.g., increase timer delay)
-		    	                break;
-		    	            case FOOD_REVERSE: // pink
-		    	                // Reverse controls
-		    	            	xil_printf("REVERSE FOOD AQCUIRED \n ");
-		    	            	soundFX = true;
-
-		    	                current_direction = 5 - current_direction; // Reverse direction
-		    	                break;
-		    	            case FOOD_SHRINK: // purple
-		    	            	soundFX = true;
-		    	            	xil_printf("SHRINK FOOD AQCUIRED \n ");
-		    	            	counter --;
-		    	            	xil_printf("COUNTER: %d\n", counter);
-
-		    	                // Reduce snake length
-		    	                break;
-		    	            case FOOD_INVINCIBLE: // cyan
-		    	            	soundFX = true;
-
-		    	            	xil_printf("INVINCIBLE FOOD AQCUIRED \n ");
-		    	            	isInvincible = true;
-		    	            	invincible_duration = 50;
-		    	                // Make snake invincible
-		    	                break;
-		    	            case FOOD_BONUS: // yellow
-		    	            	SNAKE_LENGTH++;
-		    	            	clear_score(score);
-		    	            	score = score + 5;
-		    	            	draw_score(score);
-		    	            	xil_printf("BONUS FOOD AQCUIRED \n ");
-		    	            	soundFX = true;
-
-		    	                // Award extra points
-		    	            	counter = counter + 5;
-		    	            	xil_printf("COUNTER: %d", counter);
-		    	                break;
-		    	            default:
-		    	            	xil_printf("DEFAULT CASE FOOD TYPE: %d \n", food.type);
-		    	            	break;
-
-		    	        }
+				if (isInvincible){
+					DrawSnakeHead(x_coord, y_coord, false, 0xFFFFFF, true);
+				//	DrawBlock(x_coord, y_coord, false, 0xFFFFFF);
+				}
+				else{
+					DrawBlock(snakeBody_X[0], snakeBody_Y[0], false, colors[colorindex]);
+				}
 
 
-		        // For now, just spawn new food
-		        spawn_food(&food, snakeBody_X, snakeBody_Y, SNAKE_LENGTH);		    }
-
-
-
-		    else {
-		    		DrawBlock(x_coord, y_coord, false, colors[colorindex]);
 		    		int tempX, tempY;
 		    		tempX = snakeBody_X[0];
 		    		tempY = snakeBody_Y[0];
@@ -434,71 +319,31 @@ void update_block() {
 }
 
 
-void change_direction(int direction) {
-	// 1 = up, 2 = down, 3 = left, 4 = right
-	// default left
-	// changing direction is only valid for perpendicular directions
-	// i.e. up -> left or up->right   up->down is not valid
-	if(direction ==3  && current_direction ==1 ) {
-		current_direction = 3;
-		}
-	else if(direction==4  && current_direction ==1 ) {
-		current_direction = 4;
-		}
-	else if(direction==3  && current_direction ==2 ) {
-		current_direction = 3;
-		}
-	else if(direction==4  && current_direction ==2 ) {
-		current_direction = 4;
-		}
-	else if(direction==1  && current_direction ==3 ) {
-		current_direction = 1;
-		}
-	else if(direction==2  && current_direction ==3 ) {
-		current_direction = 2;
-		}
-	else if(direction==1  && current_direction ==4 ) {
-		current_direction = 1;
-		}
-	else if(direction==2  && current_direction ==4 ) {
-		current_direction = 2;
-		}
-}
 
-void GameOver_loop() {
-	//do something
-	//send a message in UART
-}
 void Timer_InterruptHandler(XTmrCtr *data, u8 TmrCtrNumber)
 {
-	if(!GameOver)
-		update_block();
+	if(!GameOver && GameState == GameStart)
+				update_block();
 
-	  if (soundFX){
-		  triggerSoundFx("Food.wav");
+	  // soundFX bool to trigger soundfx
+	  if (soundFX && GameState == GameStart){
+  	  	  triggerSoundFx("Food.wav");
 		  soundFX = false;
 	  }
 
-	  if(collisionFX){
-		  triggerSoundFx("Death.wav");
-		  collisionFX = false;
-	  }
 
-//	  if(GameOver){
-//		  triggerSoundFx("Game_Over.wav");
-//
-//	  }
+	  // duration goes down with timer, reverts back after duration is over
 	  if (speed_boost_active) {
 			            speed_boost_duration--;
-			          //  printf("DURATION: %d", speed_boost_duration);
 			            if (speed_boost_duration <= 0) {
-			                // Revert to normal speed
-			                XTmrCtr_SetResetValue(&TimerInstancePtr, 0, TIMER_DEFAULT);
+			                // Revert to previously set speed
+			                XTmrCtr_SetResetValue(&TimerInstancePtr, 0, current_speed);
 			                speed_boost_active = false;
 			            }
 			            }
 
-	  if (food.lifetime > 0) {
+	  // Fodd will despawn after certain duration
+	  if (food.lifetime > 0 && GameState == GameStart && !GameOver) {
 	          food.lifetime--;
 	          if (food.lifetime == 0) {
 	              printf("Food expired at (%d, %d)\n", food_x, food_y); // Debug print
@@ -508,13 +353,16 @@ void Timer_InterruptHandler(XTmrCtr *data, u8 TmrCtrNumber)
 	              DrawBlock(food_x, food_y, true, 5); // Erase the food block
 
 	              // Spawn new food
-	              spawn_food(&food, snakeBody_X, snakeBody_Y, 10);
+	              spawn_food(&food, snakeBody_X, snakeBody_Y, SNAKE_LENGTH);
 	          }
 	      }
 
+	  // Checks if Invincible is true, then duration decreases until 0
 	  if (isInvincible) {
 	         invincible_duration--;
 	         if (invincible_duration <= 0) {
+
+
 	             printf("Invincibility expired\n"); // Debug print
 	             fflush(stdout); // Flush the output buffer
 
@@ -524,7 +372,6 @@ void Timer_InterruptHandler(XTmrCtr *data, u8 TmrCtrNumber)
 	     }
 
 
-	//xil_printf("COUNTER: %d\n", counter);
 
 	XTmrCtr_Stop(data,TmrCtrNumber);
 	XTmrCtr_Reset(data,TmrCtrNumber);
@@ -532,109 +379,6 @@ void Timer_InterruptHandler(XTmrCtr *data, u8 TmrCtrNumber)
 
 	TIMER_INTR_FLG = true;
 }
-
-void CheckState(int btn_val) {
-	switch (btn_value) {
-			case 1: // CENTER
-				if(GameState == StartMenu) {
-						if(StartOption == Start) {
-							GameState = GameStart;
-							restart_game();
-						}
-						else if (StartOption == Options) {
-							GameState = GameOptions;
-							OptionScreen();
-							OutlineOption(OptionSelected, false);
-						//	DrawBlock(711, 577, false, colors[colorindex]);
-							//draw_score_60x60(1, 634, 429, 0x0000FF);// 627, 429	difficulty
-							//draw_score_60x60(100, 609, 309, 0x0000FF);// 617, 309   volume
-							DisplayDifficulty(difficulty);
-							draw_volume(volume);
-						}
-				}
-				if(GameOver) {
-					restart_game();
-					GameOver = false;
-				}
-				break;
-		    case 2:
-		    	if(GameState == StartMenu) {
-		    		StartOption = Options;
-		    		StartMenuToggle(StartOption);
-		    	}
-		    	if(GameState == GameOptions) {
-		    		OutlineOption(OptionSelected, true);
-		    		OptionSelected++;
-		    		OptionSelected = OptionSelected%3;
-		    		OutlineOption(OptionSelected, false);
-		    	//	DrawBlock(711, 577, false, colors[colorindex]);
-		    	} // DOWN
-		        break;
-		    case 4:
-		    	if(GameState == GameOptions) {
-		    		GameState = StartMenu;
-		    		StartMenuToggle(StartOption);
-		    	} // LEFT
-		    	if(GameOver) { // PSEUDO QUIT FUNCTION
-		    		GameState = StartMenu;
-		    		StartScreenStartGame();
-		    		GameOver = false;
-		    	}
-		        break;
-		    case 8:
-		    	// RIGHT
-		    	if(GameState == GameOptions){
-		    		switch(OptionSelected) {
-		    		case Volume:
-		    			clear_volume(volume);
-		    			volume++;
-		    			if(volume > 100)
-		    				volume = 100;
-		    			draw_volume(volume);
-		    			break;
-		    		case Difficulty:
-		    			if(difficulty == Medium) {
-		    				difficulty = Easy;
-		    			}
-		    			else {
-		    				difficulty = Medium;
-		    			}
-		    			DisplayDifficulty(difficulty);
-		    			break;
-		    		case Snake_Color:
-		    			ToggleColor();
-		    		//	DrawBlock(711, 577, false, colors[colorindex]);
-		    			break;
-		    		default:
-		    			break;
-		    		}
-		    	}
-		    	printf("RIGHT CARIMBA\n");
-		        break;
-		    case 16:
-		    	if(GameState == StartMenu) {
-		    		StartOption = Start;
-		    		StartMenuToggle(StartOption);
-		    	}
-		    	if(GameState == GameOptions) {
-		    		OutlineOption(OptionSelected, true);
-		    		OptionSelected--;
-		    		OptionSelected = OptionSelected % 3;
-		    		 if (OptionSelected < 0) {
-		    		      OptionSelected += 3;
-		    		 }
-		    		OutlineOption(OptionSelected, false);
-		    		//DrawBlock(711, 577, false, colors[colorindex]);
-		    	}
-		    	// UP
-		    	break;
-		    default:
-		        printf("Default case is Matched.");
-		        break;
-		    }
-}
-
-
 
 int SetUpInterruptSystem(XScuGic *XScuGicInstancePtr){
 	XGpio_InterruptEnable(&BTNInst, BTN_INT);
@@ -660,13 +404,11 @@ void BTN_Intr_Handler(void *InstancePtr)
 		}
 	btn_value = XGpio_DiscreteRead(&BTNInst, 1);
 //	TIMER_INTR_FLG = true;
+	CheckState(btn_value);
 
+	if(GameState == GameStart){  // CHANGED PLACEMENT OF CONDITION
 	switch (btn_value) {
 		case 1:
-			if(GameOver) {
-				restart_game();
-				GameOver = false;
-			}
 			break;
 	    case 2:
 	    	change_direction(1); // UP
@@ -684,6 +426,7 @@ void BTN_Intr_Handler(void *InstancePtr)
 	       // printf("Default case is Matched.");
 	        break;
 	    }
+	}
 
     (void)XGpio_InterruptClear(&BTNInst, BTN_INT);
     // Enable GPIO interrupts
@@ -763,12 +506,7 @@ int main()
 			&TimerInstancePtr);
 
 			//Reset Values
-			XTmrCtr_SetResetValue(&TimerInstancePtr,
-			0, //Change with generic value
-			//0xFFF0BDC0);
-			//0x23C34600);
-			0xFF3CB9FF
-			);
+			XTmrCtr_SetResetValue(&TimerInstancePtr, 0, 0xFF3CB9FF);
 			//Interrupt Mode and Auto reload
 //			XTmrCtr_SetOptions(&TimerInstancePtr,
 //			XPAR_AXI_TIMER_0_DEVICE_ID,
@@ -793,10 +531,9 @@ int main()
 	XScuGic_Enable(&INTCInst, INTC_GPIO_INTERRUPT_ID);
 	XScuGic_SetPriorityTriggerType(&INTCInst, 61, 0xa0, 3);
 	Init_Map();
-	//StartScreenStartGame();
+	StartScreenStartGame();
 
-	restart_game();
-    //usleep(10000000); // 100 ms delay
+
 
 
 	//Draw_Map(image_buffer_pointer);
