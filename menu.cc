@@ -145,7 +145,6 @@ void ToggleColor() {
 	colorindex++;
 	colorindex = colorindex%15;
 	currentcolor = colors[colorindex];
-	//printf("current color\n");
 }
 
 void DisplayDifficulty(int difficulty) {
@@ -164,17 +163,13 @@ void DisplayDifficulty(int difficulty) {
 			break;
 	}
 }
+// y<n comparisons are based on image dimensions
 void DisplayEasy() {
-	// 627, 429	difficulty
-	//for(int y = DIFFICULTY_TEXT_Y; y<DIFFICULTY_TEXT_Y+58; y++) {
-
 	for(int y = 0; y<52; y++) {
 		memcpy(image_buffer_pointer + ((y+DIFFICULTY_TEXT_Y)*1280 + DIFFICULTY_TEXT_X), easy_text + (y*109), 436);
 	}
 }
 void DisplayMedium() {
-	// 627, 429	difficulty
-	//for(int y = DIFFICULTY_TEXT_Y; y<DIFFICULTY_TEXT_Y+ 52; y++) {
 	for(int y = 0; y<48; y++) {
 		memcpy(image_buffer_pointer +((y+DIFFICULTY_TEXT_Y)*1280 + DIFFICULTY_TEXT_X), medium_text + (y*102), 408);
 	}
