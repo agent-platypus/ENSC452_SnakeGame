@@ -65,6 +65,9 @@ void triggerSoundFx(const char *filename) {
 }
 
 // Initialize everything and restart game state
+// initializing snake
+// playspace dimensions 1100 by 800 pixels
+// starting playspace coordinate = 90, 130
 void restart_game(){
 	soundFX = false;
 	speed_boost_active = false;
