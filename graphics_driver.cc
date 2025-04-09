@@ -9,11 +9,11 @@ int black_screen[1280*1024];
 int* image_buffer_pointer = (int *)0x00900000;
 int* buffer2_pointer = (int *)0x018D2008;
 int NUM_BYTES_BUFFER = 5242880;
-int background_color = 0xFF00FF;
+int background_color = 0xFF00FF; // magenta background 
 extern int currentcolor;
 extern int* colors;
 int SnakeFaceTemp[20][20];
-int SnakeAliveFace[20][20] = {
+int SnakeAliveFace[20][20] = { // alive snake face sprite
 
 		{1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
 		{1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
@@ -37,7 +37,7 @@ int SnakeAliveFace[20][20] = {
 		{1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1}
 };
 
-int SnakeDeadFace[20][20] = {
+int SnakeDeadFace[20][20] = {  // dead snake face sprite
 		{1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
 		{1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
 		{1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
@@ -60,6 +60,9 @@ int SnakeDeadFace[20][20] = {
 		{1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1}
 };
 
+// draw the snake head at the coordinates
+// blocks are drawn starting at the top left corner of the block
+// bool remove is used to draw the block or delete the block (true to delete, false to draw block)
 void DrawSnakeHead(int x_coord, int y_coord, bool remove, int color, bool alive) {
 	int SnakeFaceSelect;
 	for(int y = 0; y<20; y++) {
@@ -105,73 +108,38 @@ void DrawFood(int x_coord, int y_coord, int type){
 int fruit;
 	    switch ((FoodType)type) {
 	        case FOOD_REGULAR:
-//	            color = COLOR_FOOD_REGULAR; // blueberry
 	            fruit = blueberry;
 	            break;
 	        case FOOD_SPEED_BOOST:
-	//            color = COLOR_FOOD_SPEED_BOOST; //apple
 	            fruit = apple;
 	            break;
 	        case FOOD_SLOW_DOWN:
-	         //   color = COLOR_FOOD_SLOW_DOWN; // eggplant
 	            fruit = eggplant;
 	            break;
 	        case FOOD_REVERSE:
-	           // color = COLOR_FOOD_REVERSE;
 	            break;
 	        case FOOD_SHRINK:
-	          //  color = COLOR_FOOD_SHRINK;
 	            break;
 	        case FOOD_INVINCIBLE:
-	         //   color = COLOR_FOOD_INVINCIBLE; // banana
 	            fruit = banana;
 	            break;
 	        case FOOD_BONUS:
-	          //  color = COLOR_FOOD_BONUS; // orange
 	            fruit = orange;
 	            break;
 	        default:
-	         //   color = 0x000000; // Black (default)
 	            break;
 	    }
 		for(int y = 0; y<20; y++) {
 				for(int x = 0; x<20; x++) {
-					//image_buffer_pointer[y*1280+x] = fruit_sprite[fruit][y][x];
-
-//						if(y == y_coord || y == y_coord + 19) // drawing an outline on each block
-//							image_buffer_pointer[y*1280+x] = 0x000000;
-//						else if(x == x_coord || x == x_coord + 19)
-//							image_buffer_pointer[y*1280+x] = 0x000000;
-//						else
-//							image_buffer_pointer[y*1280+x] = color;
-					//image_buffer_pointer[y*1280+x] = 0x000000;
 					image_buffer_pointer[(y_coord+y)*1280+(x_coord+x)] = fruit_sprite[fruit][y][x];
 				}
-
-
 		}
 
 }
 void DrawBlock(int x_coord, int y_coord, bool remove, int color) {
-	// I want to make DrawBlock not have buffer_pointer as a parameter
-	// TODO: reorganize code
 	// x = which column
 	// y = which row
 	// each block is 20 by 20 pixels
-//	    	switch ((BlockType)type) {
-//	    	case BLOCK_SNAKE:
-//	    		color = 0x00FF00; // Green for snake
-//	    		break;
-//	    	case BLOCK_OBSTACLE:
-//	    		color = 0x808080; // Gray for obstacles
-//	    	    break;
-//	    	case BLOCK_BACKGROUND:
-//	    	     color = 0xFF00FF; // Magenta for background (erase)
-//	    	      break;
-//	    	 default:
-//	    	     color = 0x000000; // Black (default)
-//	    	      break;
-//	    	}
 
 	for(int y = y_coord; y<y_coord+20; y++) {
 		for(int x = x_coord; x<x_coord+20; x++) {
@@ -198,8 +166,7 @@ void DrawSnake(int size, int x, int y) {
 
 void Init_Map() {
 	for(int y = 0; y<1024; y++) {
-			for(int x = 0; x<1280; x++) { // 0xF1C2FF light pink background try it
-										// 0xF6B26B light blue apparently kinda works tho
+			for(int x = 0; x<1280; x++) { 						
 				black_screen[y*1280 + x] = background_color;
 			}
 		}
@@ -210,7 +177,7 @@ void Init_Map() {
 					black_screen[y*1280 + x] = 0x000000;
 				}
 			}
-
+		// drawing map outline
 		for(int y = 127; y<130; y++) {
 			for(int x = 87; x < 1194; x++) {
 				black_screen[y*1280 + x] = 0x000000;
