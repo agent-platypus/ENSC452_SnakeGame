@@ -72,8 +72,8 @@ extern int food_x, food_y; // Food position
 extern int difficulty;
 extern int current_direction;
 extern int SNAKE_LENGTH;
-extern int x_coord;
-extern int y_coord;
+extern int x_coord; // x coordinate of the head of the snake
+extern int y_coord; // y coordinate of the head of the snake
 extern int counter;
 extern int score;
 extern int num_obstacles;
