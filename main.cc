@@ -260,7 +260,6 @@ void update_block() {
 				 }
 		// body collision: check if the updated coordinate of the head has any intersection
 				// with the body blocks
-				// change the condition to a variable condition later
 		for(int i = 0; i<SNAKE_LENGTH; i++) {
 			if((x_coord == snakeBody_X[i] && y_coord == snakeBody_Y[i])) {
 				DisplayGameover();
@@ -299,7 +298,8 @@ void update_block() {
 					DrawBlock(snakeBody_X[0], snakeBody_Y[0], false, colors[colorindex]);
 				}
 
-
+				// updating the coordinate of every valid snake body block at every
+			    	// frame update
 		    		int tempX, tempY;
 		    		tempX = snakeBody_X[0];
 		    		tempY = snakeBody_Y[0];
@@ -403,7 +403,6 @@ void BTN_Intr_Handler(void *InstancePtr)
 			return;
 		}
 	btn_value = XGpio_DiscreteRead(&BTNInst, 1);
-//	TIMER_INTR_FLG = true;
 	CheckState(btn_value);
 
 	if(GameState == GameStart){  // CHANGED PLACEMENT OF CONDITION
@@ -423,7 +422,6 @@ void BTN_Intr_Handler(void *InstancePtr)
 	    	change_direction(2); // DOWN
 	    	break;
 	    default:
-	       // printf("Default case is Matched.");
 	        break;
 	    }
 	}
@@ -483,7 +481,7 @@ int IntcInitFunction(u16 DeviceId, XGpio *GpioInstancePtr, XTmrCtr* TimerInstanc
 int main()
 {
 	memset((void *)shared_memory, 0, sizeof(audio_command_t)); // Initialize shared memory to zero
-    printf("Shared memory initialized.\r\n");
+    	printf("Shared memory initialized.\r\n");
 	int xStatus;
 
 	 shared_memory -> COMM_VAL = 0;
@@ -508,13 +506,10 @@ int main()
 			//Reset Values
 			XTmrCtr_SetResetValue(&TimerInstancePtr, 0, 0xFF3CB9FF);
 			//Interrupt Mode and Auto reload
-//			XTmrCtr_SetOptions(&TimerInstancePtr,
-//			XPAR_AXI_TIMER_0_DEVICE_ID,
-//			(XTC_INT_MODE_OPTION | XTC_AUTO_RELOAD_OPTION ));
 			XTmrCtr_SetOptions(&TimerInstancePtr,
 								0,
 								(XTC_INT_MODE_OPTION | XTC_AUTO_RELOAD_OPTION ));
-			//xStatus=ScuGicInterrupt_Init(XPAR_PS7_SCUGIC_0_DEVICE_ID,&TimerInstancePtr);
+
 		/*End of timer setup */
 
 	xStatus = XGpio_Initialize(&BTNInst, BTNS_DEVICE_ID);
@@ -536,11 +531,8 @@ int main()
 
 
 
-	//Draw_Map(image_buffer_pointer);
 	Xil_DCacheDisable();
-	/* initializing snake */
-	// playspace dimensions 1100 by 800 pixels
-	// starting playspace coordinate = 90, 130
+
 	// Read the random number from the IP core's register
 
 
