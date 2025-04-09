@@ -211,15 +211,13 @@ void CheckState(int btn_val) {
 				if(GameState == StartMenu) {
 						if(StartOption == Start) {
 							GameState = GameStart;
-							restart_game();
+							restart_game(); 
 						}
 						else if (StartOption == Options) {
 							GameState = GameOptions;
 							OptionScreen();
 							OutlineOption(OptionSelected, false);
 							DrawBlock(711, 577, false, colors[colorindex]);
-							//draw_score_60x60(1, 634, 429, 0x0000FF);// 627, 429	difficulty
-							//draw_score_60x60(100, 609, 309, 0x0000FF);// 617, 309   volume
 							DisplayDifficulty(difficulty);
 							draw_volume(shared_memory -> theVolume);
 						}
@@ -237,7 +235,7 @@ void CheckState(int btn_val) {
 		    	if(GameState == GameOptions) {
 		    		OutlineOption(OptionSelected, true);
 		    		OptionSelected++;
-		    		OptionSelected = OptionSelected%3;
+		    		OptionSelected = OptionSelected%3; //circular option selection
 		    		OutlineOption(OptionSelected, false);
 		    		DrawBlock(711, 577, false, colors[colorindex]);
 		    	} // DOWN
@@ -277,7 +275,6 @@ void CheckState(int btn_val) {
 		    			break;
 		    		}
 		    	}
-		    	printf("RIGHT CARIMBA\n");
 		        break;
 		    case 16:
 		    	if(GameState == StartMenu) {
